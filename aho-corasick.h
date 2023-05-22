@@ -6,12 +6,12 @@
 #include <string.h>
 
 struct ac_node {
+	short match;
 	/* if last == 0 and first == 1, array id empty */
 	unsigned char first; /* first byte set in the array */
 	unsigned char last; /* last byte set in the array */
 	struct ac_node **children; /* array of childrens */
 	struct ac_node *fail; /* fallback to this node if browsing fails */
-	char *word;
 };
 
 struct ac_root {
@@ -27,6 +27,11 @@ struct ac_search {
 	int i;
 	int step;
 	unsigned char c;
+};
+
+struct ac_result {
+	const char *word;
+	size_t length;
 };
 
 /* Init root node */
@@ -45,23 +50,23 @@ static inline int ac_insert_word(struct ac_root *root, char *word)
 int ac_finalize(struct ac_root *root);
 
 /* Init search engine with multiple result and length */
-const char *ac_search_firstl(struct ac_search *ac, struct ac_root *root, char *text, size_t length);
+struct ac_result ac_search_firstl(struct ac_search *ac, struct ac_root *root, char *text, size_t length);
 
 /* Init search engine with multiple result and no length */
 static inline
-const char *ac_search_first(struct ac_search *ac, struct ac_root *root, char *text) {
+struct ac_result ac_search_first(struct ac_search *ac, struct ac_root *root, char *text) {
 	return ac_search_firstl(ac, root, text, strlen(text));
 }
 
 /* Search next words */
-const char *ac_search_next(struct ac_search *ac);
+struct ac_result ac_search_next(struct ac_search *ac);
 
 /* Simple search which return only first word, or NULL if none match. Wants word length */
-const char *ac_searchl(struct ac_root *root, char *text, size_t length);
+struct ac_result ac_searchl(struct ac_root *root, char *text, size_t length);
 
 /* Simple search which return only first word, or NULL if none match. do not want word length */
 static inline
-const char *ac_search(struct ac_root *root, char *text)
+struct ac_result ac_search(struct ac_root *root, char *text)
 {
 	return ac_searchl(root, text, strlen(text));
 }

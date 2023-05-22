@@ -17,8 +17,8 @@ void dot_tree(FILE *dotfh, struct ac_node *n, char ch, struct ac_node *root) {
 
 	/* display node definition */
 	fprintf(dotfh, "\"%p\" [label=\"%c", n, ch);
-	if (n->word != NULL) {
-		fprintf(dotfh, ", match=%s\",color=green", n->word);
+	if (n->match != 0) {
+		fprintf(dotfh, ", match=%d\",color=green", n->match);
 	} else {
 		fprintf(dotfh, "\"");
 	}
@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
 	char buffer[1024];
 	size_t len;
 	struct ac_search ac;
-	const char *word;
+	struct ac_result res;
 	struct timeval tv_start;
 	struct timeval tv_stop;
 	int ok;
@@ -218,9 +218,9 @@ int main(int argc, char *argv[]) {
 				buffer[len-1] = '\0';
 			}
 			ok = 0;
-			for (word = ac_search_first(&ac, &root, buffer); word != NULL; word = ac_search_next(&ac)) {
+			for (res = ac_search_first(&ac, &root, buffer); res.word != NULL; res = ac_search_next(&ac)) {
 				nb_matchs++;
-				if (strcmp(word, buffer) == 0) {
+				if (strlen(buffer) == res.length && strncmp(res.word, buffer, res.length) == 0) {
 					ok = 1;
 				}
 			}
@@ -240,8 +240,8 @@ int main(int argc, char *argv[]) {
 
 	/* Perform test lookup */
 	if (do_lookup) {
-		for (word = ac_search_first(&ac, &root, text); word != NULL; word = ac_search_next(&ac)) {
-			printf("%s\n", word);
+		for (res = ac_search_first(&ac, &root, text); res.word != NULL; res = ac_search_next(&ac)) {
+			printf("%.*s\n", (int)res.length, res.word);
 		}
 		exit(0);
 	}
@@ -250,7 +250,7 @@ int main(int argc, char *argv[]) {
 	if (do_bench) {
 		gettimeofday(&tv_start, NULL);
 		for (len = 0; len < n_loops; len++) {
-			for (word = ac_search_first(&ac, &root, text); word != NULL; word = ac_search_next(&ac));
+			for (res = ac_search_first(&ac, &root, text); res.word != NULL; res = ac_search_next(&ac));
 		}
 		gettimeofday(&tv_stop, NULL);
 

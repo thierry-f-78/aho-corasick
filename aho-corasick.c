@@ -136,12 +136,8 @@ int ac_insert_wordl(struct ac_root *root, char *word, size_t len)
 			return -1;
 	}
 
-	/* Copy indexed word */
-	node->word = malloc(len + 1);
-	if (node->word == NULL)
-		return -1;
-	memcpy(node->word, word, len);
-	node->word[len] = 0;
+	/* Mark match */
+	node->match = len;
 	return 0;
 }
 
@@ -260,11 +256,14 @@ int ac_finalize(struct ac_root *root)
 	return 0;
 }
 
+#define AC_RESULT(__x, __y) ((struct ac_result){.word = (__x), .length = (__y)})
+
 // Fonction pour rechercher des mots dans le texte à l'aide de l'arbre de recherche de motifs
-const char *ac_search_next(struct ac_search *ac)
+struct ac_result ac_search_next(struct ac_search *ac)
 {
 	unsigned char c;
 	register int i;
+	register short match;
 
 	/* load counter in stack variable. This increase speed avoid dereference on each loop */
 	i = ac->i;
@@ -285,29 +284,31 @@ const char *ac_search_next(struct ac_search *ac)
 			ac->node = ac->root->root;
 		} else {
 			ac->node = node_get_children(ac->node, c);
-			if (ac->node->word != NULL) {
+			match = ac->node->match;
+			if (match > 0) {
 				ac->step = 1;
 				ac->i = i;
-				return ac->node->word;
+				return AC_RESULT(&ac->text[i - match + 1], match);
 			}
 continue_step_1:
 			ac->fail_node = ac->node->fail;
 			/* Check if fail nodes match */
 			while (ac->fail_node != NULL) {
-				if (ac->fail_node->word != NULL) {
+				match = ac->fail_node->match;
+				if (match > 0) {
 					ac->step = 2;
 					ac->i = i;
-					return ac->fail_node->word;
+					return AC_RESULT(&ac->text[i - match + 1], match);
 				}
 continue_step_2:
 				ac->fail_node = ac->fail_node->fail;
 			}
 		}
 	}
-	return NULL;
+	return AC_RESULT(NULL, 0);
 }
 
-const char *ac_search_firstl(struct ac_search *ac, struct ac_root *root, char *text, size_t length)
+struct ac_result ac_search_firstl(struct ac_search *ac, struct ac_root *root, char *text, size_t length)
 {
 	ac->text = text;
 	ac->length = length;
@@ -318,7 +319,7 @@ const char *ac_search_firstl(struct ac_search *ac, struct ac_root *root, char *t
 	return ac_search_next(ac);
 }
 
-const char *ac_searchl(struct ac_root *root, char *text, size_t length)
+struct ac_result ac_searchl(struct ac_root *root, char *text, size_t length)
 {
 	struct ac_search ac;
 
