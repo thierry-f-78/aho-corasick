@@ -4,16 +4,57 @@
 
 #include "aho-corasick.h"
 
+/* recurssive function which replace node pointer by another one.
+ * this function must be called only during the tree creation and
+ * never after backlinks created. Each node is encountered only
+ * once. Chekc first if the replaced node is one of the children
+ * node, to avoid browsing of all the tree if it is not required.
+ */
+static int node_replace(struct ac_node *node, struct ac_node *old, struct ac_node *new) {
+	int i;
+	for (i = node->first; i <= node->last; i++) {
+		if (node->children[i - node->first] == old) {
+			node->children[i - node->first] = new;
+			return 1;
+		}
+	}
+	for (i = node->first; i <= node->last; i++) {
+		if (node->children[i - node->first] != NULL) {
+			if (node_replace(node->children[i - node->first], old, new) == 1) {
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+static inline
+struct ac_node *node_growth(struct ac_root *root, struct ac_node *node, int slots)
+{
+	struct ac_node *new;
+
+	new = realloc(node, sizeof(struct ac_node) + (slots * sizeof(struct ac_node *)));
+	if (new == NULL)
+		return NULL;
+	if (new != node) {
+		if (root->root == node)
+			root->root = new;
+		else
+			node_replace(root->root, node, new);
+	}
+	return new;
+}
+
 /* compressed index add children */
 static inline
-struct ac_node *node_add_children(struct ac_node *node, unsigned char c)
+struct ac_node *node_add_children(struct ac_root *root, struct ac_node *node, unsigned char c)
 {
 	unsigned char index;
 
 	/* first case : array not initialized */
 	if (node->last < node->first) {
-		node->children = calloc(sizeof(struct ac_node *), 1);
-		if (node->children == NULL)
+		node = node_growth(root, node, 1);
+		if (node == NULL)
 			return NULL;
 		node->first = c;
 		node->last = c;
@@ -27,8 +68,8 @@ struct ac_node *node_add_children(struct ac_node *node, unsigned char c)
 
 	/* third case : new node is lower than low boundary */
 	else if (c < node->first) {
-		node->children = realloc(node->children, (node->last - c + 1) * sizeof(struct ac_node *));
-		if (node->children == NULL)
+		node = node_growth(root, node, node->last - c + 1);
+		if (node == NULL)
 			return NULL;
 		/* move memory from 0 to new destination */
 		memmove(&node->children[node->first - c],
@@ -42,8 +83,8 @@ struct ac_node *node_add_children(struct ac_node *node, unsigned char c)
 
 	/* third case : new node is upper than high boundary */
 	else {
-		node->children = realloc(node->children, (c - node->first + 1) * sizeof(struct ac_node *));
-		if (node->children == NULL)
+		node = node_growth(root, node, c - node->first + 1);
+		if (node == NULL)
 			return NULL;
 		/* reset from last slot + 1 for number of new slots */
 		memset(&node->children[node->last - node->first + 1], 0, (c - node->last) * sizeof(struct ac_node *));
@@ -71,14 +112,14 @@ struct ac_node *node_get_children(struct ac_node *node, unsigned char c)
 
 /* compressed index get or new children. create children if not found */
 static inline
-struct ac_node *node_get_or_new_children(struct ac_node *node, unsigned char c)
+struct ac_node *node_get_or_new_children(struct ac_root *root, struct ac_node *node, unsigned char c)
 {
 	struct ac_node *n;
 
 	n = node_get_children(node, c);
 	if (n != NULL)
 		return n;
-	return node_add_children(node, c);
+	return node_add_children(root, node, c);
 }
 
 struct ac_node_browse {
@@ -131,7 +172,7 @@ int ac_insert_wordl(struct ac_root *root, char *word, size_t len)
 	/* Index wod */
 	node = root->root;
 	for (i = 0; i < len; i++) {
-		node = node_get_or_new_children(node, (unsigned char)word[i]);
+		node = node_get_or_new_children(root, node, (unsigned char)word[i]);
 		if (node == NULL)
 			return -1;
 	}
