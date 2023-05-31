@@ -42,10 +42,10 @@ static inline size_t csz(struct ac_node *n) {
 	size_t sz;
 	int i;
 
-	sz = sizeof(struct ac_node);
-	for (i = 0; i <=255; i++) {
-		if (n->children[i] != NULL) {
-			sz += csz(n->children[i]);
+	sz = sizeof(struct ac_node) + (n->last - n->first + 1) * sizeof(struct ac_node *);
+	for (i = n->first; i <= n->last; i++) {
+		if (n->children[i - n->first] != NULL) {
+			sz += csz(n->children[i - n->first]);
 		}
 	}
 	return sz;

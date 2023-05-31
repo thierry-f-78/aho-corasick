@@ -8,17 +8,65 @@
 static inline
 struct ac_node *node_add_children(struct ac_node *node, unsigned char c)
 {
-	node->children[c] = calloc(sizeof(struct ac_node), 1);
-	if (node->children[c] == NULL)
+	unsigned char index;
+
+	/* first case : array not initialized */
+	if (node->last < node->first) {
+		node->children = calloc(sizeof(struct ac_node *), 1);
+		if (node->children == NULL)
+			return NULL;
+		node->first = c;
+		node->last = c;
+		index = 0;
+	}
+
+	/* second case : allocated space contains slot for a new node */
+	else if (c >= node->first && c <= node->last) {
+		index = c - node->first;
+	}
+
+	/* third case : new node is lower than low boundary */
+	else if (c < node->first) {
+		node->children = realloc(node->children, (node->last - c + 1) * sizeof(struct ac_node *));
+		if (node->children == NULL)
+			return NULL;
+		/* move memory from 0 to new destination */
+		memmove(&node->children[node->first - c],
+		        node->children,
+		        (node->last - node->first + 1) * sizeof(struct ac_node *));
+		/* reset from 0 for number of new slots */
+		memset(node->children, 0, (node->first - c) * sizeof(struct ac_node *));
+		node->first = c;
+		index = 0;
+	}
+
+	/* third case : new node is upper than high boundary */
+	else {
+		node->children = realloc(node->children, (c - node->first + 1) * sizeof(struct ac_node *));
+		if (node->children == NULL)
+			return NULL;
+		/* reset from last slot + 1 for number of new slots */
+		memset(&node->children[node->last - node->first + 1], 0, (c - node->last) * sizeof(struct ac_node *));
+		node->last = c;
+		index = c - node->first;
+	}
+
+	node->children[index] = calloc(sizeof(struct ac_node), 1);
+	if (node->children[index] == NULL)
 		return NULL;
-	return node->children[c];
+	node->children[index]->first = 1;
+	return node->children[index];
 }
 
-/* compressed index get children */
+/* compressed index get children. Note the condition is always false
+ * when first > last.
+ */
 static inline
 struct ac_node *node_get_children(struct ac_node *node, unsigned char c)
 {
-	return node->children[c];
+	if (c <= node->last && c >= node->first)
+		return node->children[c - node->first];
+	return NULL;
 }
 
 /* compressed index get or new children. create children if not found */
@@ -36,6 +84,7 @@ struct ac_node *node_get_or_new_children(struct ac_node *node, unsigned char c)
 struct ac_node_browse {
 	struct ac_node *node;
 	int c;
+	int end;
 };
 
 /* browsing function : get next */
@@ -44,7 +93,7 @@ struct ac_node *node_browse_next(struct ac_node_browse *bn)
 {
 	struct ac_node *node;
 
-	while (bn->c <= 255) {
+	while (bn->c <= bn->end) {
 		node = bn->node->children[bn->c];
 		bn->c++;
 		if (node != NULL)
@@ -59,6 +108,7 @@ struct ac_node *node_browse_first(struct ac_node_browse *bn, struct ac_node *nod
 {
 	bn->node = node;
 	bn->c = 0;
+	bn->end = node->last - node->first;
 	return node_browse_next(bn);
 }
 
@@ -68,6 +118,7 @@ int ac_init_root(struct ac_root *root)
 	root->root = calloc(sizeof(struct ac_node), 1);
 	if (root->root == NULL)
 		return 0;
+	root->root->first = 1;
 	return 1;
 }
 

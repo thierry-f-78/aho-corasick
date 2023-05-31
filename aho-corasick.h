@@ -6,7 +6,10 @@
 #include <string.h>
 
 struct ac_node {
-	struct ac_node *children[256]; /* array of childrens */
+	/* if last == 0 and first == 1, array id empty */
+	unsigned char first; /* first byte set in the array */
+	unsigned char last; /* last byte set in the array */
+	struct ac_node **children; /* array of childrens */
 	struct ac_node *fail; /* fallback to this node if browsing fails */
 	char *word;
 };
