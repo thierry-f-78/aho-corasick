@@ -16,6 +16,8 @@ struct ac_node {
 
 struct ac_root {
 	struct ac_node *root;
+	char *data;
+	size_t length;
 };
 
 struct ac_search {

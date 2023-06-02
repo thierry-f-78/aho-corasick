@@ -1,48 +1,137 @@
 /* Copyright (c) 2023 Thierry FOURNIER (tfournier@arpalert.org) */
 
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "aho-corasick.h"
 
-/* recurssive function which replace node pointer by another one.
- * this function must be called only during the tree creation and
- * never after backlinks created. Each node is encountered only
- * once. Chekc first if the replaced node is one of the children
- * node, to avoid browsing of all the tree if it is not required.
- */
-static int node_replace(struct ac_node *node, struct ac_node *old, struct ac_node *new) {
+#define NODESLOTS(__n) ((__n)->first > (__n)->last ? 0 : (__n)->last - (__n)->first + 1)
+#define NODESZ(__n) (sizeof(struct ac_node) + (NODESLOTS(__n) * sizeof(struct ac_node *)))
+#define NODENEXT(__n) ((struct ac_node *)((char *)(__n) + NODESZ(__n)))
+#define NODEEND(__r) ((struct ac_node *)((__r)->data + (__r)->length))
+#define NODEADDOFFSET(__n, __o) ((struct ac_node *)((char *)(__n) + (__o)))
+#define NODESUBOFFSET(__n, __o) ((struct ac_node *)((char *)(__n) - (__o)))
+
+static
+void node_move(char *new_bloc, struct ac_root *root,
+               struct ac_node **track0, struct ac_node **track1) {
 	int i;
-	for (i = node->first; i <= node->last; i++) {
-		if (node->children[i - node->first] == old) {
-			node->children[i - node->first] = new;
-			return 1;
-		}
+	int sign; /* minus if true */
+	unsigned long offset;
+	struct ac_node *n;
+
+	/* positive or negative offset ? pointeur is unsigned 64 bit
+	 * value, for safety, offset must be be unsigned 64 bit value,
+	 * so we must process sign outside the value.
+	 */
+	sign = new_bloc < root->data;
+
+	/* Compute offset, apply it on the requested node. */
+	if (sign) {
+		offset = root->data - new_bloc;
+		if (track0 != NULL && *track0 != NULL)
+			*track0 = NODESUBOFFSET(*track0, offset);
+		if (track1 != NULL && *track1 != NULL)
+			*track1 = NODESUBOFFSET(*track1, offset);
+	} else {
+		offset = new_bloc - root->data;
+		if (track0 != NULL && *track0 != NULL)
+			*track0 = NODEADDOFFSET(*track0, offset);
+		if (track1 != NULL && *track1 != NULL)
+			*track1 = NODEADDOFFSET(*track1, offset);
 	}
-	for (i = node->first; i <= node->last; i++) {
-		if (node->children[i - node->first] != NULL) {
-			if (node_replace(node->children[i - node->first], old, new) == 1) {
-				return 1;
+
+	/* Update root */
+	root->data = new_bloc;
+	root->root = (struct ac_node *)new_bloc;
+
+	/* Browse each bloc and apply offset */
+	for (n = root->root; n < NODEEND(root); n = NODENEXT(n)) {
+		if (n->fail != NULL) {
+			if (sign) {
+				n->fail = NODESUBOFFSET(n->fail, offset);
+			} else {
+				n->fail = NODEADDOFFSET(n->fail, offset);
+			}
+		}
+		for (i = n->first; i <= n->last; i++) {
+			if (n->children[i - n->first] != NULL) {
+				if (sign) {
+					n->children[i - n->first] = NODESUBOFFSET(n->children[i - n->first], offset);
+				} else {
+					n->children[i - n->first] = NODEADDOFFSET(n->children[i - n->first], offset);
+				}
 			}
 		}
 	}
-	return 0;
 }
 
+/* This function growth a node, but it can change all pointers.
+ * changing memory locations. The growth pointer is returned.
+ * the incoming pointer must not be used after calling this
+ * function. Note the "track" variable accept a pointer and
+ * the function apply shit on this pointer ios needed.
+ */
 static inline
-struct ac_node *node_growth(struct ac_root *root, struct ac_node *node, int slots)
+struct ac_node *node_growth(struct ac_root *root, struct ac_node *node, int slots, struct ac_node **track)
 {
-	struct ac_node *new;
+	struct ac_node *n;
+	size_t cur_slots;
+	size_t sz;
+	char *new_bloc;
+	int i;
 
-	new = realloc(node, sizeof(struct ac_node) + (slots * sizeof(struct ac_node *)));
-	if (new == NULL)
-		return NULL;
-	if (new != node) {
-		if (root->root == node)
-			root->root = new;
-		else
-			node_replace(root->root, node, new);
+	/* Compute the size to add to main memory bloc */
+	if (node == NULL) {
+		sz = sizeof(struct ac_node) + (slots * sizeof(struct ac_node *));
+	} else if (node->first > node->last) {
+		sz = slots * sizeof(struct ac_node *);
+	} else {
+		cur_slots = node->last - node->first + 1;
+		sz = (slots - cur_slots) * sizeof(struct ac_node *);
 	}
-	return new;
+
+	/* execute effective realloc and update bloc length */
+	new_bloc = realloc(root->data, root->length + sz);
+	if (new_bloc == NULL)
+		return NULL;
+
+	/* If realloc move the memory bloc, we must update all the pointers of
+	 * all childrens link. Note the fail links are not computed at this time.
+	 * Note the tree root node is always the first node of the memory bloc.
+	 */
+	if (new_bloc != root->data)
+		node_move(new_bloc, root, &node, track);
+
+	/* Special case : init new node and return it. New
+	 * node is always the last allocated space
+	 */
+	if (node == NULL) {
+		root->length += sz;
+		n = (struct ac_node *)(root->data + root->length - sz);
+		memset((char *)n, 0, sz);
+		return n;
+	}
+
+	/* Apply offset on all children links greater than the growth node
+	 * and then perform effective move of the memory bloc
+	 */
+	for (n = root->root; n < NODEEND(root); n = NODENEXT(n)) {
+		for (i = n->first; i <= n->last; i++) {
+			if (n->children[i - n->first] > node) {
+				n->children[i - n->first] = NODEADDOFFSET(n->children[i - n->first], sz);
+			}
+		}
+	}
+	if (track != NULL && *track > node)
+		*track = NODEADDOFFSET(*track, sz);
+
+	root->length += sz;
+	memmove((char *)NODENEXT(node) + sz,
+	        (char *)NODENEXT(node),
+	        (char *)NODEEND(root) - (char *)NODENEXT(node) - sz);
+
+	return node;
 }
 
 /* compressed index add children */
@@ -50,10 +139,24 @@ static inline
 struct ac_node *node_add_children(struct ac_root *root, struct ac_node *node, unsigned char c)
 {
 	unsigned char index;
+	struct ac_node *new;
+
+	/* This function perform two allocation, the first one is new node without
+	 * childrens and the second is a growth of existing children. Each one of
+	 * these allocation could modify tree base or pointer links. To growth
+	 * safely the children array of link, we must known its pointer of new
+	 * node. If we growth without the pointer value, the memory zone which
+	 * receive its value remains uninitialized, and the next growth operation
+	 * could read uninitialized pointer (in reallity we dont care).
+	 */
+	new = node_growth(root, NULL, 0, &node);
+	if (new == NULL)
+		return NULL;
+	new->first = 1;
 
 	/* first case : array not initialized */
 	if (node->last < node->first) {
-		node = node_growth(root, node, 1);
+		node = node_growth(root, node, 1, &new);
 		if (node == NULL)
 			return NULL;
 		node->first = c;
@@ -68,7 +171,7 @@ struct ac_node *node_add_children(struct ac_root *root, struct ac_node *node, un
 
 	/* third case : new node is lower than low boundary */
 	else if (c < node->first) {
-		node = node_growth(root, node, node->last - c + 1);
+		node = node_growth(root, node, node->last - c + 1, &new);
 		if (node == NULL)
 			return NULL;
 		/* move memory from 0 to new destination */
@@ -83,7 +186,7 @@ struct ac_node *node_add_children(struct ac_root *root, struct ac_node *node, un
 
 	/* third case : new node is upper than high boundary */
 	else {
-		node = node_growth(root, node, c - node->first + 1);
+		node = node_growth(root, node, c - node->first + 1, &new);
 		if (node == NULL)
 			return NULL;
 		/* reset from last slot + 1 for number of new slots */
@@ -92,11 +195,9 @@ struct ac_node *node_add_children(struct ac_root *root, struct ac_node *node, un
 		index = c - node->first;
 	}
 
-	node->children[index] = calloc(sizeof(struct ac_node), 1);
-	if (node->children[index] == NULL)
-		return NULL;
-	node->children[index]->first = 1;
-	return node->children[index];
+	/* Index new node */
+	node->children[index] = new;
+	return new;
 }
 
 /* compressed index get children. Note the condition is always false
@@ -156,9 +257,11 @@ struct ac_node *node_browse_first(struct ac_node_browse *bn, struct ac_node *nod
 /* Init root node */
 int ac_init_root(struct ac_root *root)
 {
-	root->root = calloc(sizeof(struct ac_node), 1);
-	if (root->root == NULL)
+	root->data = calloc(sizeof(struct ac_node), 1);
+	if (root->data == NULL)
 		return 0;
+	root->length = sizeof(struct ac_node);
+	root->root = (struct ac_node *)root->data;
 	root->root->first = 1;
 	return 1;
 }
