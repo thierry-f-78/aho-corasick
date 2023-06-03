@@ -12,7 +12,7 @@ struct ac_node {
 	unsigned char last; /* last byte set in the array */
 	struct ac_node *fail; /* fallback to this node if browsing fails */
 	struct ac_node *children[0]; /* array of childrens */
-};
+} __attribute((packed))__;
 
 struct ac_root {
 	struct ac_node *root; /* root node, the pointer could change during tree contruction */
