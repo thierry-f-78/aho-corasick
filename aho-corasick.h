@@ -15,9 +15,10 @@ struct ac_node {
 };
 
 struct ac_root {
-	struct ac_node *root;
-	char *data;
-	size_t length;
+	struct ac_node *root; /* root node, the pointer could change during tree contruction */
+	char *data; /* the pointer of the current memory bloc */
+	size_t length; /* the length of data used in the memory bloc */
+	size_t total; /* the real size of the memory bloc */
 };
 
 struct ac_search {

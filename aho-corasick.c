@@ -1,9 +1,14 @@
 /* Copyright (c) 2023 Thierry FOURNIER (tfournier@arpalert.org) */
 
+#include <sys/mman.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "aho-corasick.h"
+
+/* useful only with mmap mapping */
+#define MAP_BLOC_SZ (1024*1024)
 
 #define NODESLOTS(__n) ((__n)->first > (__n)->last ? 0 : (__n)->last - (__n)->first + 1)
 #define NODESZ(__n) (sizeof(struct ac_node) + (NODESLOTS(__n) * sizeof(struct ac_node *)))
@@ -11,6 +16,33 @@
 #define NODEEND(__r) ((struct ac_node *)((__r)->data + (__r)->length))
 #define NODEADDOFFSET(__n, __o) ((struct ac_node *)((char *)(__n) + (__o)))
 #define NODESUBOFFSET(__n, __o) ((struct ac_node *)((char *)(__n) - (__o)))
+
+static inline
+void *ac_realloc(struct ac_root *root, size_t size) {
+	size_t new_size;
+	void *out;
+
+	if (root->total >= size)
+		return root->data;
+
+	new_size = root->total;
+	while (new_size < size)
+		new_size += MAP_BLOC_SZ;
+
+	out = mmap(NULL, new_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+	if (out == MAP_FAILED)
+		return NULL;
+
+	/* use memcopy because the mmap block cannot override */
+	memcpy(out, root->data, root->total);
+
+	/* remove old mmap block */
+	munmap(root->data, root->total);
+
+	/* Update root totzl size */
+	root->total = new_size;
+	return out;
+}
 
 static
 void node_move(char *new_bloc, struct ac_root *root,
@@ -66,6 +98,8 @@ void node_move(char *new_bloc, struct ac_root *root,
 	}
 }
 
+
+
 /* This function growth a node, but it can change all pointers.
  * changing memory locations. The growth pointer is returned.
  * the incoming pointer must not be used after calling this
@@ -92,7 +126,7 @@ struct ac_node *node_growth(struct ac_root *root, struct ac_node *node, int slot
 	}
 
 	/* execute effective realloc and update bloc length */
-	new_bloc = realloc(root->data, root->length + sz);
+	new_bloc = ac_realloc(root, root->length + sz);
 	if (new_bloc == NULL)
 		return NULL;
 
@@ -257,9 +291,12 @@ struct ac_node *node_browse_first(struct ac_node_browse *bn, struct ac_node *nod
 /* Init root node */
 int ac_init_root(struct ac_root *root)
 {
-	root->data = calloc(sizeof(struct ac_node), 1);
+	root->total = 0;
+	root->data = NULL;
+	root->data = ac_realloc(root, sizeof(struct ac_node));
 	if (root->data == NULL)
 		return 0;
+	memset(root->data, 0, sizeof(struct ac_node));
 	root->length = sizeof(struct ac_node);
 	root->root = (struct ac_node *)root->data;
 	root->root->first = 1;
@@ -350,6 +387,18 @@ int ac_finalize(struct ac_root *root)
 	struct ac_node_browse bn;
 	int c;
 	struct fifo fifo;
+	char *new_bloc;
+
+	/* Convert the mmap allocated bloc to malloc'ed memory
+	 * bloc and free the mmap bloc. When mmap id freed,
+	 * the memory is really free and retruned to the system.
+	 */
+	new_bloc = malloc(root->length);
+	if (new_bloc == NULL)
+		return -1;
+	memcpy(new_bloc, root->data, root->length);
+	munmap(root->data, root->total);
+	node_move(new_bloc, root, NULL, NULL);
 
 	/* winit fifo ill contains node waiting for processing */
 	fifo_init(&fifo);
